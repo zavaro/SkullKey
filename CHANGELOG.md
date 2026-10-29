@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.21.3 — 2026-10-29
+
+### Fixed
+
+- **EA installs stuck at 99 %** — Maxima kept printing the same progress
+  forever once the game's installer ended with an error, so SkullKey never
+  saw the install go quiet. SkullKey now reads the installer's own log,
+  finishes the install once nothing is left running, and ignores what an
+  earlier installation left in that log. Battlefield 1942 was tested through
+  installation and launch; Syndicate, SimCity and Battlefield 2142 still need
+  confirmation ([#10](https://github.com/Necrosiak/SkullKey/issues/10)).
+- **Cancelled EA downloads starting again** — Maxima resumed a cancelled
+  install on its own after the next game (measured with a Mass Effect
+  download cancelled days earlier). SkullKey clears Maxima's pending queue
+  before every install. Downloaded game files are kept.
+- **EA games installed without a Steam shortcut** — when EA confirms the
+  files are already there, SkullKey adds the missing shortcut instead of
+  downloading the game again.
+- **Medal of Honor: Allied Assault closing at startup** — a Mesa
+  compatibility setting is applied to this game only. Tested on a BC-250
+  with Bazzite; other machines and the expansions still need testing.
+
+### Changed
+
+- **EA installer warnings stay visible** — if the game's installer reports
+  an error but the game is confirmed installed, its page and the completion
+  notification show the installer's code: the game may still fail to start.
+- **Updated EA client** — installation failures now reach the command's
+  result, and the client passes the account's legacy CD key to installers
+  that explicitly ask for one. Battlefield 2142's own installer has not been
+  validated yet.
+
+## 1.21.2 — 2026-10-29
+
+### Fixed
+
+- **SkullKey opens again** — 1.21.1 left the menu on the loading spinner for
+  everyone. Thanks to [zavaro](https://github.com/zavaro), who found it and
+  sent the fix ([#13](https://github.com/Necrosiak/SkullKey/pull/13)).
+- **EA installs stuck at 99 %** — once the game was downloaded, a setup
+  program the game's installer left open (a DirectX or Visual C++ setup, a
+  window that had been answered) kept the install waiting forever. SkullKey
+  now closes what the installer left behind and finishes the install. It
+  never touches another program running at the same time, and if the
+  installer is really waiting for an answer, the download tells you to look
+  for its window ([#10](https://github.com/Necrosiak/SkullKey/issues/10)).
+
+### Changed
+
+- **Xbox: engine 0.2.13 and the matching Xodus Nexus runtime** — the fixes
+  of Xodus Nexus 0.4.1: Age of Empires IV starts, sign-in works again for
+  the Microsoft accounts that failed, and interrupted updates recover
+  better. SkullKey updates its engine first, then the runtime, on its own.
+
 ## 1.21.1 — 2026-10-28
 
 ### New

@@ -69,6 +69,8 @@ export interface GameDetails extends ContentType {
   Editors: EditorAction[];
   UpdateAvailable?: string;
   InstallBlocked?: boolean;
+  FilesInstalled?: boolean;
+  InstallerExitCode?: number;
 }
 export interface EditorAction {
   Type: string;
@@ -136,6 +138,7 @@ export interface ProgressUpdate extends ContentType {
   Description: string;
   Error?: string;
   ErrorCode?: string;
+  InstallerExitCode?: number;
   LogPath?: string;
 }
 export interface GameImages extends ContentType {
