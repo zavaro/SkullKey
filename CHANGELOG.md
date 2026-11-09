@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.21.10 — 2026-11-09
+
+### Fixes
+
+- Download sizes and speeds now follow your Steam language (MB/GB in English, Mo/Go in French), on the Downloads page, game pages and the installed games list ([#14](https://github.com/Necrosiak/SkullKey/issues/14)).
+- EA: the Game Explorer check now reads installer logs written in UTF-16, so Syndicate's harmless code 3 is recognised. A DirectX failure in the same run is still refused ([#10](https://github.com/Necrosiak/SkullKey/issues/10)).
+- EA: older installers that read a staged product key (Battlefield 2142) now log what SkullKey finds in their `autorun.dat`, and the game id is also found in UTF-16 text and in paths written with `/`. Battlefield 2142 still needs to be confirmed ([#10](https://github.com/Necrosiak/SkullKey/issues/10)). The EA client updates automatically.
+
+### Thanks
+
+Thanks to [@bastiHST90](https://github.com/bastiHST90) ([#14](https://github.com/Necrosiak/SkullKey/issues/14)) and [@zavaro](https://github.com/zavaro) ([#10](https://github.com/Necrosiak/SkullKey/issues/10)) for their reports and logs.
+
+**Full changelog:** [v1.21.9...v1.21.10](https://github.com/Necrosiak/SkullKey/compare/v1.21.9...v1.21.10)
+
 ## 1.21.9 — 2026-11-06
 
 ### Fixes
