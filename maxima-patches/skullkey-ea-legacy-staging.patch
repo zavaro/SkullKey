@@ -1,41 +1,6 @@
---- a/maxima-lib/src/core/manifest/mod.rs
-+++ b/maxima-lib/src/core/manifest/mod.rs
-@@ -1,6 +1,7 @@
- pub mod dip;
- pub mod pre_dip;
- pub(crate) mod installer_args;
-+pub(crate) mod legacy_staging;
- use super::legacy_keys::{LegacyCdKey, LegacyKeyError};
- 
- use dip::DiPManifest;
-@@ -118,6 +119,24 @@
-     let key = if manifest.requires_legacy_key() {
-         Some(resolver().await?.ok_or(ManifestError::MissingLegacyKey)?)
-     } else {
-+        // Older installers read their key from the EA Core staging registry
-+        // entry their autorun.dat names; stage it as the EA app does. Without
-+        // such an entry no key is requested, and a missing key is not fatal:
-+        // the installer then reports it as it would anywhere else.
-+        if let Some(id) = legacy_staging::find_staging_id(path) {
-+            match resolver().await {
-+                Ok(Some(key)) => {
-+                    if cancelled() {
-+                        return Err(ManifestError::Cancelled);
-+                    }
-+                    #[cfg(unix)]
-+                    legacy_staging::write_staging_key(&id, &key).await?;
-+                    log::info!("Staged the account's product key for this installer");
-+                }
-+                Ok(None) => log::warn!("This installer expects a staged product key, but the account has none for it"),
-+                Err(error) => log::warn!("Could not look up this game's product key: {error}"),
-+            }
-+        }
-         None
-     };
-     if cancelled() {
 --- a/maxima-lib/src/core/manifest/dip.rs
 +++ b/maxima-lib/src/core/manifest/dip.rs
-@@ -209,17 +209,21 @@
+@@ -209,17 +209,21 @@ impl DiPManifest {
          let args = self.collect_touchup_args(&install_path, key)?;
          let path = install_path.join(&self.touchup.path());
          let path = case_insensitive_path(path);
@@ -61,37 +26,10 @@
  
          invalidate_mx_wine_registry().await;
          Ok(())
---- a/maxima-lib/src/core/manifest/pre_dip.rs
-+++ b/maxima-lib/src/core/manifest/pre_dip.rs
-@@ -125,17 +125,21 @@
- 
-         let path = install_path.join(remove_leading_slash(&self.executable.file_path));
-         let path = case_insensitive_path(path);
--        if args.sensitive {
-+        let log_start = super::legacy_staging::installer_log_len(&install_path);
-+        let outcome = if args.sensitive {
-             crate::unix::wine::run_sensitive_wine_command(
-                 path,
-                 Some(args.values),
-                 None,
-                 CommandType::Run,
-             )
--            .await?;
-+            .await
-         } else {
--            run_wine_command(path, Some(args.values), None, true, CommandType::Run).await?;
--        }
-+            run_wine_command(path, Some(args.values), None, true, CommandType::Run)
-+                .await
-+                .map(|_| ())
-+        };
-+        super::legacy_staging::tolerate_game_explorer(outcome, &install_path, log_start)?;
- 
-         invalidate_mx_wine_registry().await;
-         Ok(())
+new file mode 100644
 --- /dev/null
 +++ b/maxima-lib/src/core/manifest/legacy_staging.rs
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,300 @@
 +//! Older EA installers (EA Download Manager era) that never take the product
 +//! key as an argument, and Touchup's harmless Game Explorer failure.
 +//!
@@ -108,11 +46,12 @@
 +    path::{Path, PathBuf},
 +};
 +
-+use log::warn;
++use log::{info, warn};
 +
 +use crate::util::native::{NativeError, WineError};
 +
-+const STAGING_MARKER: &str = "online_content\\";
++// Path separators vary between installers; both are accepted.
++const STAGING_MARKERS: [&str; 2] = ["online_content\\", "online_content/"];
 +const MAX_SCAN: u64 = 8 * 1024 * 1024;
 +const MAX_LOG: u64 = 1024 * 1024;
 +
@@ -148,8 +87,11 @@
 +    let lower = text.to_ascii_lowercase();
 +    let mut ids = Vec::new();
 +    let mut from = 0;
-+    while let Some(at) = lower[from..].find(STAGING_MARKER) {
-+        let start = from + at + STAGING_MARKER.len();
++    while let Some((at, marker)) = STAGING_MARKERS.iter()
++        .filter_map(|m| lower[from..].find(m).map(|at| (at, *m)))
++        .min_by_key(|(at, _)| *at)
++    {
++        let start = from + at + marker.len();
 +        let id: String = text[start..].chars()
 +            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 +            .take(65).collect();
@@ -165,24 +107,37 @@
 +/// names exactly one (read as ASCII and as UTF-16LE).
 +pub fn find_staging_id(install_path: &Path) -> Option<String> {
 +    let mut ids: Vec<String> = Vec::new();
-+    for file in autorun_files(install_path) {
-+        let Ok(handle) = std::fs::File::open(&file) else { continue };
++    let files = autorun_files(install_path);
++    for file in &files {
++        let Ok(handle) = std::fs::File::open(file) else { continue };
 +        let mut bytes = Vec::new();
 +        if handle.take(MAX_SCAN).read_to_end(&mut bytes).is_err() {
 +            continue;
 +        }
 +        let ascii: String = bytes.iter().map(|&b| if b.is_ascii() { b as char } else { '\0' }).collect();
-+        let wide: String = bytes.chunks_exact(2)
-+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-+            .map(|u| if u < 0x80 { u as u8 as char } else { '\0' })
-+            .collect();
-+        for id in ids_in(&ascii).into_iter().chain(ids_in(&wide)) {
++        // A UTF-16 string can start on an odd byte of a binary file: read both.
++        let wide = |skip: usize| -> String {
++            bytes[skip.min(bytes.len())..].chunks_exact(2)
++                .map(|c| u16::from_le_bytes([c[0], c[1]]))
++                .map(|u| if u < 0x80 { u as u8 as char } else { '\0' })
++                .collect()
++        };
++        let found = ids_in(&ascii).into_iter().chain(ids_in(&wide(0))).chain(ids_in(&wide(1)));
++        for id in found {
 +            if !ids.contains(&id) {
 +                ids.push(id);
 +            }
 +        }
 +    }
-+    // Several distinct ids: the key's destination is ambiguous, write none.
++    // Say what was found every time (the id is not secret, the key never
++    // goes through here): a skipped key must not fail silently (#10).
++    match (files.len(), ids.len()) {
++        (0, _) => info!("No autorun.dat under __Installer: no staged product key needed"),
++        (n, 0) => warn!("{n} autorun.dat file(s) found, but none names a staging id: no product key staged"),
++        (n, 1) => info!("Staging id '{}' found in {n} autorun.dat file(s)", ids[0]),
++        // Several distinct ids: the key's destination is ambiguous, write none.
++        (n, _) => warn!("{n} autorun.dat file(s) name {} different staging ids ({}): no product key staged", ids.len(), ids.join(", ")),
++    }
 +    if ids.len() == 1 { ids.pop() } else { None }
 +}
 +
@@ -234,7 +189,8 @@
 +/// True when this run's log shows a failed Game Explorer registration and no
 +/// other error.
 +pub fn game_explorer_only_failure(text: &str) -> bool {
-+    let errors: Vec<&str> = text.lines().filter(|l| l.contains("ERROR")).collect();
++    // Any case: a failed DirectX setup logs "Error installing DirectX runtime".
++    let errors: Vec<&str> = text.lines().filter(|l| l.to_ascii_lowercase().contains("error")).collect();
 +    let explorer = |l: &str| l.contains("IGameExplorer") || l.contains("GDFBinary");
 +    text.contains("Failed to install GDF")
 +        && !errors.is_empty()
@@ -244,11 +200,27 @@
 +fn new_log_text(install_path: &Path, start: u64) -> Option<String> {
 +    let mut file = std::fs::File::open(installer_log(install_path)?).ok()?;
 +    let len = file.metadata().ok()?.len();
++    let mut bom = [0u8; 2];
++    let wide = file.read_exact(&mut bom).is_ok() && bom == [0xFF, 0xFE];
 +    let start = if start <= len { start } else { 0 };
-+    file.seek(SeekFrom::Start(start.max(len.saturating_sub(MAX_LOG)))).ok()?;
++    let mut start = start.max(len.saturating_sub(MAX_LOG));
++    if wide {
++        start += start % 2;
++    }
++    file.seek(SeekFrom::Start(start)).ok()?;
 +    let mut bytes = Vec::new();
 +    file.take(MAX_LOG).read_to_end(&mut bytes).ok()?;
-+    Some(String::from_utf8_lossy(&bytes).into_owned())
++    Some(decode_log(&bytes, wide))
++}
++
++/// InstallLog.txt is UTF-16LE on the EA installers that write it (each run
++/// appends a new section starting with its own BOM), plain text elsewhere.
++fn decode_log(bytes: &[u8], wide: bool) -> String {
++    if !wide {
++        return String::from_utf8_lossy(bytes).into_owned();
++    }
++    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
++    String::from_utf16_lossy(&units).replace('\u{feff}', "")
 +}
 +
 +/// Accept Touchup's code 3 when its only error is the Game Explorer
@@ -303,6 +275,49 @@
 +    }
 +
 +    #[test]
++    fn staging_id_is_found_at_odd_utf16_offsets_and_with_slashes() {
++        let dir = std::env::temp_dir().join(format!("mx-staging-odd-{}", std::process::id()));
++        let disk = dir.join("__Installer").join("DISK1");
++        std::fs::create_dir_all(&disk).unwrap();
++        let mut bytes = vec![0x07u8];
++        bytes.extend("Staging\\eadm\\eadm\\online_content\\bf2142_deluxe_dd\\ergc\0".encode_utf16().flat_map(|u| u.to_le_bytes()));
++        std::fs::write(disk.join("autorun.dat"), &bytes).unwrap();
++        assert_eq!(find_staging_id(&dir).as_deref(), Some("bf2142_deluxe_dd"));
++        std::fs::write(disk.join("autorun.dat"), b"eadm/online_content/game_2/ergc").unwrap();
++        assert_eq!(find_staging_id(&dir).as_deref(), Some("game_2"));
++        std::fs::remove_dir_all(&dir).unwrap();
++        assert_eq!(find_staging_id(&dir), None);
++    }
++
++    #[test]
++    fn utf16_install_log_is_decoded() {
++        let run = |text: &str| -> Vec<u8> {
++            let mut b = vec![0xFF, 0xFE];
++            b.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
++            b
++        };
++        let explorer = "IGameExplorer2 for windows 7\r\n\
++            12:57:29  ERROR: Windows IGameExplorer2 is unable to InstallGame (80070005)\r\n\
++            12:57:29  ERROR: Failed to install 'F:\\x\\GDFBinary_en_US.dll' for install path 'F:\\x\\'\r\n\
++            12:57:29  Failed to install GDF\r\n12:57:29  Installer finished with exit code: 3\r\n";
++        // An earlier run, then Touchup's: only what Touchup appended is read.
++        let mut log = run("12:00:00  Error installing DirectX runtime.\r\n12:00:01  Installer finished with exit code: 1\r\n");
++        let start = log.len() as u64;
++        log.extend(run(explorer));
++        let dir = std::env::temp_dir().join(format!("mx-staging-log-{}", std::process::id()));
++        std::fs::create_dir_all(dir.join("__Installer")).unwrap();
++        std::fs::write(dir.join("__Installer").join("InstallLog.txt"), &log).unwrap();
++        let text = new_log_text(&dir, start).unwrap();
++        assert!(!text.contains('\u{feff}'));
++        assert!(game_explorer_only_failure(&text));
++        // The whole file still shows the earlier DirectX failure.
++        assert!(!game_explorer_only_failure(&new_log_text(&dir, 0).unwrap()));
++        // An odd start (never written by Touchup) is realigned, not garbled.
++        assert!(game_explorer_only_failure(&new_log_text(&dir, start + 1).unwrap()));
++        std::fs::remove_dir_all(&dir).unwrap();
++    }
++
++    #[test]
 +    fn only_a_game_explorer_failure_is_tolerated() {
 +        let explorer = "IGameExplorer2 for windows 7\n\
 +            ERROR: Windows IGameExplorer2 is unable to InstallGame (80070005)\n\
@@ -312,5 +327,69 @@
 +        let directx = "Error installing DirectX runtime.\nERROR: something else\nFailed to install GDF\n";
 +        assert!(!game_explorer_only_failure(directx));
 +        assert!(!game_explorer_only_failure("Installer finished with exit code: 3\n"));
++        assert!(!game_explorer_only_failure(&format!("Error installing DirectX runtime.\n{explorer}")));
 +    }
 +}
+--- a/maxima-lib/src/core/manifest/mod.rs
++++ b/maxima-lib/src/core/manifest/mod.rs
+@@ -1,6 +1,7 @@
+ pub mod dip;
+ pub mod pre_dip;
+ pub(crate) mod installer_args;
++pub(crate) mod legacy_staging;
+ use super::legacy_keys::{LegacyCdKey, LegacyKeyError};
+ 
+ use dip::DiPManifest;
+@@ -118,6 +119,24 @@ where
+     let key = if manifest.requires_legacy_key() {
+         Some(resolver().await?.ok_or(ManifestError::MissingLegacyKey)?)
+     } else {
++        // Older installers read their key from the EA Core staging registry
++        // entry their autorun.dat names; stage it as the EA app does. Without
++        // such an entry no key is requested, and a missing key is not fatal:
++        // the installer then reports it as it would anywhere else.
++        if let Some(id) = legacy_staging::find_staging_id(path) {
++            match resolver().await {
++                Ok(Some(key)) => {
++                    if cancelled() {
++                        return Err(ManifestError::Cancelled);
++                    }
++                    #[cfg(unix)]
++                    legacy_staging::write_staging_key(&id, &key).await?;
++                    log::info!("Staged the account's product key for this installer");
++                }
++                Ok(None) => log::warn!("This installer expects a staged product key, but the account has none for it"),
++                Err(error) => log::warn!("Could not look up this game's product key: {error}"),
++            }
++        }
+         None
+     };
+     if cancelled() {
+--- a/maxima-lib/src/core/manifest/pre_dip.rs
++++ b/maxima-lib/src/core/manifest/pre_dip.rs
+@@ -125,17 +125,21 @@ impl PreDiPManifest {
+ 
+         let path = install_path.join(remove_leading_slash(&self.executable.file_path));
+         let path = case_insensitive_path(path);
+-        if args.sensitive {
++        let log_start = super::legacy_staging::installer_log_len(&install_path);
++        let outcome = if args.sensitive {
+             crate::unix::wine::run_sensitive_wine_command(
+                 path,
+                 Some(args.values),
+                 None,
+                 CommandType::Run,
+             )
+-            .await?;
++            .await
+         } else {
+-            run_wine_command(path, Some(args.values), None, true, CommandType::Run).await?;
+-        }
++            run_wine_command(path, Some(args.values), None, true, CommandType::Run)
++                .await
++                .map(|_| ())
++        };
++        super::legacy_staging::tolerate_game_explorer(outcome, &install_path, log_start)?;
+ 
+         invalidate_mx_wine_registry().await;
+         Ok(())

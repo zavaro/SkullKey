@@ -8,7 +8,8 @@ import { executeAction } from "../Utils/executeAction";
 import { GameDetailsItem } from "./GameDetailsItem";
 import { pickInstallDrive } from "./DrivePicker";
 import { notify, storeTheme } from "./Styled";
-import { t, tabLabel } from "../i18n";
+import { currentLocale, t, tabLabel } from "../i18n";
+import { formatSize } from "../Utils/units";
 import { configureShortcut } from "../Utils/utils";
 
 // Stores whose games SkullKey can move between drives (Xbox moves itself).
@@ -110,7 +111,7 @@ export const InstalledGamesPage: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI })
         );
     };
 
-    const fmtSize = (b: number) => b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : `${Math.max(1, Math.round(b / (1 << 20)))} MB`;
+    const fmtSize = (b: number) => formatSize(b, currentLocale());
 
     const move = async (setName: string, game: { shortname: string; steamClientID: string }) => {
         const drive = await pickInstallDrive(serverAPI);

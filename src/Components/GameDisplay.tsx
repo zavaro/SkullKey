@@ -28,7 +28,8 @@ import { ScrollableWindow } from '../ScrollableWindow';
 import { appActionButtonClasses, basicAppDetailsClasses } from '../staticClasses';
 import { executeAction } from '../Utils/executeAction';
 import { ActionCard, IconBtn, storeTheme } from './Styled';
-import { t } from '../i18n';
+import { currentLocale, t } from '../i18n';
+import { localizeUnits } from '../Utils/units';
 import { FaPlay, FaDownload, FaTimes, FaSync } from 'react-icons/fa';
 
 
@@ -232,7 +233,7 @@ const GameDisplay: VFC<GameDisplayProperties> = (
                         {installing ? (
                             <div key={'download'} style={{ margin: '5px 2px 10px', animation: 'fadeIn .3s ease-in-out forwards' }}>
                                 <div style={{ marginBottom: '5px', color: storeTheme(initActionSet).color, fontSize: '11px', lineHeight: '13px', whiteSpace: 'pre-wrap' }}>
-                                    {progress.Description}
+                                    {localizeUnits(progress.Description, currentLocale())}
                                 </div>
                                 <ProgressBar nProgress={progress.Percentage} />
                             </div>

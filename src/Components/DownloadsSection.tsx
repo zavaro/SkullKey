@@ -2,7 +2,8 @@ import { DialogButton, Focusable, Navigation, ServerAPI } from "decky-frontend-l
 import React, { VFC, useEffect, useState } from "react";
 import { FaSkull, FaTimes, FaDownload, FaPause, FaPlay } from "react-icons/fa";
 import { storeTheme } from "./Styled";
-import { t } from "../i18n";
+import { currentLocale, t } from "../i18n";
+import { formatRate, parseDesc } from "../Utils/units";
 import { QueueItem, SET_OF, STORE_OF, getQueue, onQueueChange, prioritize, removeCurrent, removeFromQueue, setPaused } from "../Utils/downloadQueue";
 import { executeAction } from "../Utils/executeAction";
 import { topBarHolder } from "../Utils/topBarPlacement";
@@ -36,20 +37,6 @@ function useArt(serverAPI: ServerAPI, set: string | undefined, shortname: string
         artPending[key].then(a => setArt(a));
     }, [key]);
     return art;
-}
-
-// Speed and amounts as the stores write them ("12,6 / 120,1 Go · 48 Mo/s").
-const num = (s: string) => parseFloat(s.replace(",", "."));
-function parseDesc(desc: string) {
-    const plain = desc.replace(/<[^>]+>/g, " ");
-    const sp = plain.match(/([\d.,]+)\s*(Mo|MB|MiB|Go|GB|GiB)\/s/i);
-    const speed = sp ? num(sp[1]) * (/^g/i.test(sp[2]) ? 1024 : 1) : null;  // MB/s
-    const am = plain.match(/([\d.,]+)\s*(Mo|MB|MiB|Go|GB|GiB)?\s*\/\s*([\d.,]+)\s*(Mo|MB|MiB|Go|GB|GiB)/i);
-    // Both sides with their unit, like Steam ("28,8 Go / 120,1 Go").
-    const unit = (u?: string) => (u || "").replace(/^(MiB|MB)$/i, "Mo").replace(/^(GiB|GB)$/i, "Go");
-    const amount = am ? `${am[1]} ${unit(am[2] || am[4])} / ${am[3]} ${unit(am[4])}` : null;
-    const eta = plain.match(/~\s*([\d]+\s*(?:min|h|s)[^·]*)/i);
-    return { speed, amount, eta: eta ? eta[1].trim() : null };
 }
 
 // Speed history per download (2 s samples), kept across re-renders.
@@ -108,7 +95,7 @@ const CurrentBanner: VFC<{ serverAPI: ServerAPI; d: Dl }> = ({ serverAPI, d }) =
     }, [d.title, art.logo, logoOk]);
     const th = themeOf(d.store);
     const Icon = th.icon;
-    const parsed = parseDesc(d.desc);
+    const parsed = parseDesc(d.desc, currentLocale());
     const { amount, eta } = parsed;
     const speed = d.paused ? 0 : parsed.speed;
     const h = history[key] = history[key] || [];
@@ -155,8 +142,8 @@ const CurrentBanner: VFC<{ serverAPI: ServerAPI; d: Dl }> = ({ serverAPI, d }) =
             <div style={{ position: "absolute", right: 24, top: 0, bottom: 0, width: "40%", display: "flex", flexDirection: "column",
                 justifyContent: "center", gap: 16 }}>
                 <div style={{ display: "flex", gap: 12 }}>
-                    <Stat label={t("dl_network")} value={speed !== null ? `${speed.toFixed(1)} Mo/s` : "—"} color="#2f7fd0" />
-                    <Stat label={t("dl_peak")} value={h.length ? `${peak.toFixed(1)} Mo/s` : "—"} color="#2f7fd0" />
+                    <Stat label={t("dl_network")} value={speed !== null ? formatRate(speed, currentLocale()) : "—"} color="#2f7fd0" />
+                    <Stat label={t("dl_peak")} value={h.length ? formatRate(peak, currentLocale()) : "—"} color="#2f7fd0" />
                     <Stat label={t("dl_destination")} value={dest} color="#5bd35b" />
                 </div>
                 <Bar label={t("dl_data")} right={amount ? `${amount}  ·  ${Math.floor(dataPct)} %` : `${Math.floor(dataPct)} %`} pct={dataPct} color="#2f7fd0" />
