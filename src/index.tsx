@@ -72,7 +72,7 @@ export default definePlugin((serverApi: ServerAPI) => {
   serverApi.routerHook.addRoute("/skullkey", () => <SkullKeyRoute serverAPI={serverApi} />);
   const openExpanded = () => openSkullKeyExpanded(serverApi);
   window.addEventListener(EXPANDED_EVENT, openExpanded);
-  const removeMenu = patchMenu();
+  const removeMenu = patchMenu(serverApi as any);
 
   reportFailedUpdate(serverApi);
   let checkingPorts = false;

@@ -1086,6 +1086,32 @@ class Plugin:
         import prefixes
         return prefixes
 
+    # Steam main-menu entry (same option as Steamcord #86). Steam's localStorage
+    # can come back with an older value after a restart, so this file decides.
+    @staticmethod
+    def _menu_path():
+        return os.path.join(decky_plugin.DECKY_PLUGIN_SETTINGS_DIR, "menu-entry.json")
+
+    async def get_menu_entry(self):
+        try:
+            with open(self._menu_path(), encoding="utf-8") as f:
+                value = json.load(f).get("menu")
+        except Exception:
+            return None
+        return value if value in ("on", "off") else None
+
+    async def set_menu_entry(self, on=True):
+        p = self._menu_path()
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p + ".tmp", "w", encoding="utf-8") as f:
+                json.dump({"menu": "on" if on else "off"}, f)
+            os.replace(p + ".tmp", p)
+        except Exception as e:
+            decky_plugin.logger.warning(f"[menu] save: {e!r}")
+            return {"ok": False}
+        return {"ok": True}
+
     async def get_prefix_root(self):
         try:
             return self._prefixes_mod().load().get("root") or ""
