@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.21.11 — 2026-11-10
+
+### Fixes
+
+- Turning off the SkullKey entry in Steam's main menu now lasts after Steam restarts. SkullKey also saves this choice in its own settings, because Steam could reload an older value and bring the entry back (same fix as [Steamcord #86](https://github.com/Necrosiak/Steamcord/issues/86)).
+
+**Full changelog:** [v1.21.10...v1.21.11](https://github.com/Necrosiak/SkullKey/compare/v1.21.10...v1.21.11)
+
 ## 1.21.10 — 2026-11-09
 
 ### Fixes
